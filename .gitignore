@@ -1,0 +1,9 @@
+# Splash ignore list
+*.log
+*.zip
+*.bkp
+fluidd.cfg
+mesh.cfg
+moonraker.conf
+ui_makra.cfg
+temp_backup*
