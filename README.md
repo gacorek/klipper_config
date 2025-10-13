@@ -64,7 +64,7 @@ Projekt opiera się na pracy zespołu Klippera oraz społeczności Vertex Delta 
   > Wszystkie pliki SusisStrolch są objęte licencją [Creative Commons Attribution 3.0](https://creativecommons.org/licenses/by/3.0/).  
   > Dla prac pochodnych należy zapoznać się z oryginalną licencją autora.
   
-- [KIAUH (Klipper Installation And Update Helper)) (https://github.com/th33xitus/kiauh) 
+- [KIAUH (Klipper Installation And Update Helper)] (https://github.com/th33xitus/kiauh) 
   > Niezastąpione narzędzie do instalacji Klippera, Moonrakera, Fluidd i zarządzania instancjami. 
 
 ---
@@ -86,4 +86,5 @@ Pliki pochodzące od innych autorów są objęte ich oryginalnymi licencjami.
   "ui_migration": "fluidd.cfg",
   "autor": "gacorek vel JanuszShark™"
 }
+
 
