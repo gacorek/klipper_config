@@ -1,0 +1,468 @@
+[gcode_macro PREHEAT]
+gcode:
+    {% set T_BED = params.T_BED|default(0)|float %}
+    {% set T_TOOL = params.T_TOOL|default(200)|float %}
+    {% if T_BED > 20.0 %}
+      PRINT_STR STR="PREHEAT T_BED={T_BED}"
+      M190 S{T_BED}
+      PRINT_STR STR="execute: HEAT_SOAK DURATION={ T_BED * 2 }"
+      HEAT_SOAK DURATION={ T_BED * 2 }
+      M400
+    {% endif %}
+    PRINT_STR STR="PREHEAT T_TOOL={T_TOOL}"
+    M109 S{T_TOOL}
+    PRINT_STR STR="PREHEAT done"
+
+[gcode_macro PREHEAT_PLA]
+gcode:
+    PREHEAT T_BED=65 T_TOOL=210
+
+[gcode_macro PREHEAT_PETG]
+gcode:
+    PREHEAT T_BED=70 T_TOOL=230
+
+# ***********************************************
+# * User implemented g-code macros
+# ***********************************************
+[gcode_macro SET_GCODE_OFFSET]
+rename_existing: _SET_GCODE_OFFSET
+gcode:
+    {% if printer.save_variables.variables.gcode_offsets %}
+        {% set offsets = printer.save_variables.variables.gcode_offsets %}
+    {% else %}
+        {% set offsets = {'x': None,'y': None,'z': None} %}
+    {% endif %}
+
+    {% set ns = namespace(offsets={'x': offsets.x,'y': offsets.y,'z': offsets.z}) %}
+
+    _SET_GCODE_OFFSET {% for p in params %}{'%s=%s '% (p, params[p])}{% endfor %}
+
+    {%if 'X' in params %}{% set null = ns.offsets.update({'x': params.X}) %}{% endif %}
+    {%if 'Y' in params %}{% set null = ns.offsets.update({'y': params.Y}) %}{% endif %}
+    {%if 'Z' in params %}{% set null = ns.offsets.update({'z': params.Z}) %}{% endif %}
+    SAVE_VARIABLE VARIABLE=gcode_offsets VALUE="{ns.offsets}"
+
+[delayed_gcode LOAD_GCODE_OFFSETS]
+initial_duration: 2
+gcode:
+    {% if printer.save_variables.variables.gcode_offsets %}
+        {% set offsets = printer.save_variables.variables.gcode_offsets %}
+        { action_respond_info("Loading gcode offsets from saved variables [%s]" % (offsets)) }
+        _SET_GCODE_OFFSET {% for axis, offset in offsets.items()
+            if offsets[axis] %}{ "%s=%s " % (axis, offset) }{% endfor %}
+    {% endif %}|
+
+
+# ***********************
+# setting for a delta printer
+# ***********************
+[gcode_macro START_PRINT]
+gcode:
+  {% set T_TOOL = params.T_TOOL|default(200)|float %}
+  {% set T_BED = params.T_BED|default(65)|float %}
+  {% set FAN_SPEED = params.FAN_SPEED|default(25)|float %}
+  {% set PRIMELINE = params.PRIMELINE|default(0)|float %}
+
+  UPDATE_DELAYED_GCODE ID=LOAD_GCODE_OFFSETS DURATION=0.1
+  G0 F3600
+  G92 E0
+  SAVE_GCODE_STATE NAME=START_state
+  PRINT_STR STR="startup procedure"
+  M355 S0.5
+# PRINT_STR STR="loading mesh"
+# BED_MESH_PROFILE LOAD="deltaCalibration"
+  PRINT_STR STR="heating..."
+  CLEAR_PAUSE
+  M140 S{T_BED}
+  M106 S255     ; run cooling fans at full power
+  PARK
+  
+  PREHEAT T_BED={T_BED} T_TOOL={T_TOOL}
+  {%if PRIMELINE > 0 %}
+    PRIME_LINE
+  {% endif %}
+  PRINT_STR STR="drop a blob..."
+  G92 E0  ; reset extruder
+  G90     ; absolute positioning
+  G0 Z0.25 F3600
+
+  G91     ; relative positioning
+  G1 E-0.8 Z-0.1 F6000
+  G1 X5 E-2 F3000
+  G1 E2.5 Z30 F1500
+  M106 S{FAN_SPEED}
+
+  RESTORE_GCODE_STATE NAME=START_state
+  M355 S1.0
+  PRINT_STR STR="start printing"
+
+# HEAT_SOAK and companions - heated bed temp distribution
+[gcode_macro HEAT_SOAK]
+gcode:
+  {% set DURATION = params.DURATION|default(180)|float %}
+  PRINT_STR STR="HEAT_SOAK DURATION={DURATION}s"
+  UPDATE_DELAYED_GCODE ID=SOAK_TIME DURATION={DURATION}  ; resume after DURATION seconds
+  BUILDIN_PAUSE
+  M117
+
+[gcode_macro SKIP_HEAT_SOAK]
+gcode:
+  PRINT_STR STR="SKIP_HEAT_SOAK"
+  UPDATE_DELAYED_GCODE ID=SOAK_TIME DURATION=0.1
+
+[delayed_gcode SOAK_TIME]
+gcode:
+  PRINT_STR STR="SOAK_TIME"
+  BUILDIN_RESUME
+  M107    ; turn off cooling fans
+
+# print an ARC prime line (Delta, eliptic printbed)
+# Parameter:
+#   HEIGHT: layer height
+#   DISTANCE: distance to bed border
+#   OFFSET: distance between the two prime lines
+#   LENGTH: total purge amount (mm)
+#
+[gcode_macro PRIME_LINE]
+gcode:
+  {% set PURGE_HEIGHT = params.HEIGHT|default(0.25)|float %}
+  {% set PURGE_DIST = params.DISTANCE|default(5)|float %}
+  {% set PURGE_OFFSET = params.OFFSET|default(0.5)|float %}
+  {% set PURGE_LENGTH = params.LENGTH|default(30)|float %}
+
+  {% set x1 = printer.toolhead.axis_maximum.x - PURGE_DIST  %}
+  {% set x2 = x1 - PURGE_OFFSET %}
+
+  SAVE_GCODE_STATE NAME=PRIME_LINE_state
+  PRINT_STR STR="Printing prime line"
+
+  G92 E0
+  G0 X-{x1} Y0 Z{PURGE_HEIGHT} F3600
+  G3 X{x1} Y0 I{x1} J0 E{PURGE_LENGTH / 2}
+  G0 X{x2}
+  G2 X-{x2} Y0 I-{x2} J0 E{PURGE_LENGTH / 2}
+
+  RESTORE_GCODE_STATE NAME=PRIME_LINE_state
+
+# park the nozzle
+[gcode_macro PARK]
+gcode:
+  {% set X = printer.toolhead.axis_maximum.x * 0.95  %}
+  {% set Z = params.Z|default(0)|float %}
+
+  SAVE_GCODE_STATE NAME=PARK_state
+  PRINT_STR STR="Park: homed axes: [{printer.toolhead.homed_axes}]"
+  {% if 'z' not in printer.toolhead.homed_axes %}
+     M117 Homing print head
+     G28
+  {% endif %}
+  M117 Parking print head
+  {% if Z|float>0 %}
+     setRelPos
+     G1 Z{Z|float}
+     setAbsPos
+     G1 X-{X} Y0 F2000
+  {% else %}
+     setAbsPos
+     G0 X-{X} Y0 Z80 F2000
+  {% endif %}
+  RESTORE_GCODE_STATE NAME=PARK_state
+  M400
+
+[gcode_macro END_PRINT]
+gcode:
+  THE_END
+
+[gcode_macro THE_END]
+gcode:
+    TURN_OFF_HEATERS    ;turn off heaters...
+    SAVE_GCODE_STATE NAME=END_state
+    M83                 ;set relative extrusion
+    G92 E0              ;reset extrusion amount
+    M204 S10000         ;set max acceleration
+    G1 E-2 F4000        ;retract 2mm
+    M204 S3000          ;set max acceleration
+
+    ;move the toolhead out of the way
+    ;if the tool is less than 30mm away from Z Max, move it to Z max, otherwise, move Z up 30mm
+
+    ;Obtain the Z axis limit from the [stepper_z] section of the config file and make
+    ;  a decision where to move the Z axis based on the current toolhead
+    {% if printer.toolhead.position.z|float + 30 >= printer.toolhead.axis_maximum.z|float %}
+    setAbsPos
+    G1 Z{printer.toolhead.axis_maximum.z|float} F1000 ;Move tool
+    {% else %}
+    setRelPos
+    G1 Z30 F1000         ;move Z axis up 30mm
+    {% endif %}
+
+    RESTORE_GCODE_STATE NAME=END_state
+    G1 X0 Y{printer.toolhead.axis_maximum.y} F24000    ;park tool at back of printer
+    M107
+    #UNLOAD_FILAMENT     ;this is a good spot to call an unload
+                         ;filament macro, if you are into that sort of thing
+    # SET_GCODE_OFFSET Z=0 ;reset whatever babystepping you have done
+    M84                  ;disable motors
+    CLEAR_PAUSE          ;clear whatever PAUSE state you may have if you have it
+    M117 DONE!!!         ;print a message on your LCD
+    SET_PIN PIN=LED VALUE=0.0
+
+[gcode_macro M600]
+default_parameter_Z: 80
+gcode:
+  SET_IDLE_TIMEOUT TIMEOUT=7200
+  PAUSE
+  setRelPos
+  G11
+  G1 E3.8
+  setAbsPos
+  PARK Z={printer.toolhead.position.z + Z|float}
+  M117 Filament change. Waiting user interaction
+
+[gcode_macro LOAD_FILAMENT]
+gcode:
+    M701
+
+[gcode_macro M701]
+default_parameter_E: 500
+gcode:
+  M117 Loading filament
+  M83
+  G1 E{E} F1200
+  M106 S255
+  M400
+  G1 E50 F300
+  M400
+  G1 E50 F300
+  M400
+  G11
+  G1 E3.8
+  M82
+  #G92 E0
+  M117 Load completed
+  SET_FILAMENT_SENSOR SENSOR=fsensor ENABLE=1
+
+[gcode_macro UNLOAD_FILAMENT]
+gcode:
+    M702
+
+[gcode_macro M702]
+default_parameter_E: 500
+gcode:
+  M117 Unloading filament
+  SET_FILAMENT_SENSOR SENSOR=fsensor ENABLE=0
+  M83
+  G11
+  G1 E-{E} F1200
+  M400
+  M82
+  #G92 E0
+  M117 Unload completed
+
+
+[gcode_macro CANCEL_PRINT]
+rename_existing: BASE_CANCEL_PRINT
+gcode:
+  { action_respond_info("CANCEL_PRINT") }
+    TURN_OFF_HEATERS
+    SDCARD_RESET_FILE
+    CLEAR_PAUSE
+    BASE_CANCEL_PRINT
+    G28
+
+#   The path of the local directory on the host machine to look for
+#   g-code files. This is a read-only directory (sdcard file writes
+#   are not supported). One may point this to OctoPrint's upload
+#   directory (generally ~/.octoprint/uploads/ ). This parameter must
+#   be provided.
+
+[pause_resume]
+recover_velocity: 50.
+#   When capture/restore is enabled, the speed at which to return to
+#   the captured position (in mm/s). Default is 50.0 mm/s.
+
+# **********************
+# tools....
+# **********************
+
+[gcode_macro setAbsPos]
+gcode:
+  { action_respond_info("Set to Absolute Positioning...") }
+  G90
+
+[gcode_macro setRelPos]
+gcode:
+  { action_respond_info("Set to Relative Positioning...") }
+  G91
+
+[gcode_macro Power_Off]
+gcode: { action_call_remote_method("set_device_power",
+  device="DVES_15946B-5227",
+  state="on") }
+
+[gcode_macro Power_On]
+gcode: { action_call_remote_method("set_device_power",
+  device="DVES_15946B-5227",
+  state="on") }
+
+[gcode_macro PID_Extruder_200]
+gcode:  M106
+        PID_CALIBRATE HEATER=extruder TARGET=200
+        SAVE_CONFIG
+        M18
+
+[gcode_macro PID_Extruder_230]
+gcode:  M106
+        PID_CALIBRATE HEATER=extruder TARGET=230
+        SAVE_CONFIG
+        M18
+
+[gcode_macro PID_Bed_65]
+gcode:  M106
+        PID_CALIBRATE HEATER=heater_bed TARGET=65
+        SAVE_CONFIG
+        M18
+
+[gcode_macro M851]
+gcode:
+  G28
+  probe_calibrate
+
+[gcode_macro G32]
+gcode:
+  G28
+  delta_calibrate
+  G1 X0 Y0 F4200
+  save_config
+
+[gcode_macro G29]
+gcode:
+  G28
+  bed_mesh_calibrate
+  G1 X0 Y0 Z15 F4200
+  save_config
+
+[gcode_macro M300]
+gcode:
+	{% set S = params.S|default(1000)|float %}
+	{% set P = params.P|default(100)|float %}
+	SET_PIN PIN=BEEPER VALUE=50 CYCLE_TIME={ 1/S }
+	G4 P{P}
+	SET_PIN PIN=BEEPER VALUE=0
+
+# enable LEDs - in contrast to real M355 we control brightness
+# by values between 0.1 and 0.99
+[gcode_macro M355]
+gcode:
+	{% set S = params.S|default(0)|float %}
+	SET_PIN PIN=LED VALUE={S} CYCLE_TIME=0.005
+
+[gcode_macro zoffset]
+gcode: SET_GCODE_OFFSET Z=0.065
+
+[gcode_macro PAdvance_On]
+gcode : 
+	{% set PA = params.PA|default(0)|float %}
+	SET_PRESSURE_ADVANCE advance=0.2  # PETG
+
+[gcode_macro PAdvance_Off]
+gcode : SET_PRESSURE_ADVANCE advance=0.0
+
+# ************************************************
+# * Remove annoying errors from g-code console
+# ************************************************
+
+[gcode_macro M108]
+gcode:
+
+[gcode_macro M200]
+gcode:
+
+[gcode_macro M201]
+gcode:
+
+[gcode_macro M203]
+gcode:
+
+[gcode_macro M205]
+gcode:
+
+[gcode_macro M207]
+gcode:
+
+[gcode_macro M300]
+gcode:
+
+[gcode_macro M420]
+gcode:
+
+#*# <---------------------- SAVE_CONFIG ---------------------->
+#*# DO NOT EDIT THIS BLOCK OR BELOW. The contents are auto-generated.
+#*#
+#*# [extruder]
+#*# control = pid
+#*# pid_kp = 23.255
+#*# pid_ki = 1.632
+#*# pid_kd = 82.845
+#*#
+#*# [heater_bed]
+#*# pid_kp = 63.282
+#*# pid_ki = 2.526
+#*# pid_kd = 396.305
+#*#
+#*# [printer]
+#*# delta_radius = 108.826106
+#*#
+#*# [stepper_a]
+#*# angle = 210.824781
+#*# arm_length = 288.130000
+#*# position_endstop = 208.639068
+#*#
+#*# [stepper_b]
+#*# angle = 329.595165
+#*# arm_length = 288.130000
+#*# position_endstop = 208.593010
+#*#
+#*# [stepper_c]
+#*# angle = 90.000000
+#*# arm_length = 288.130000
+#*# position_endstop = 208.150375
+#*#
+#*# [delta_calibrate]
+#*# height0 = 0.0
+#*# height0_pos = 24216.000,24230.000,24324.000
+#*# height1 = 0.0
+#*# height1_pos = 26977.000,26967.000,22096.000
+#*# height2 = 0.0
+#*# height2_pos = 23611.000,28558.000,23700.000
+#*# height3 = 0.0
+#*# height3_pos = 22216.000,26653.000,26745.000
+#*# height4 = 0.0
+#*# height4_pos = 23604.000,23633.000,27496.000
+#*# height5 = 0.0
+#*# height5_pos = 26221.000,22366.000,26345.000
+#*# height6 = 0.0
+#*# height6_pos = 27914.000,23574.000,23669.000
+#*#
+#*# [bed_mesh default]
+#*# version = 1
+#*# points =
+#*# 	-0.073086, -0.073086, -0.073086, -0.073086, -0.073086, -0.073086, -0.073086, -0.073086, -0.073086
+#*# 	-0.018988, -0.018988, -0.018988, -0.019472, 0.014695, 0.030269, 0.025481, 0.025481, 0.025481
+#*# 	0.071542, 0.071542, 0.021823, 0.015364, 0.066573, 0.092957, 0.064112, 0.127808, 0.127808
+#*# 	0.020915, 0.020915, 0.032965, 0.057816, 0.067580, 0.083682, 0.066276, 0.084595, 0.084595
+#*# 	0.057984, 0.031985, 0.028766, 0.058738, 0.039442, 0.073510, 0.081781, 0.067275, 0.127339
+#*# 	0.025033, 0.025033, 0.021125, 0.023841, 0.045274, 0.022694, 0.049718, 0.031422, 0.031422
+#*# 	0.020669, 0.020669, -0.002135, -0.002543, -0.005143, 0.031268, -0.002860, -0.019101, -0.019101
+#*# 	-0.036570, -0.036570, -0.036570, -0.045562, -0.063613, -0.173205, -0.055240, -0.055240, -0.055240
+#*# 	0.150571, 0.150571, 0.150571, 0.150571, 0.150571, 0.150571, 0.150571, 0.150571, 0.150571
+#*# tension = 0.2
+#*# min_x = -74.99
+#*# algo = bicubic
+#*# y_count = 9
+#*# mesh_y_pps = 2
+#*# min_y = -75.0
+#*# x_count = 9
+#*# max_y = 75.0
+#*# mesh_x_pps = 2
+#*# max_x = 75.0
