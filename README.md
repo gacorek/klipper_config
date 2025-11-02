@@ -14,7 +14,7 @@ Projekt opiera się na oryginalnej dokumentacji Klippera oraz pracy społecznoś
 - **Modyfikacje:**  
   > 🔹 **Brak** — drukarka w pełni oryginalna, bez zmian sprzętowych  
   > 🔹 Testy prowadzone na stockowym zestawie, by zapewnić kompatybilność z domyślnym hardwarem  
-  > 🔹 Planowane: radiator na RPi,( niestety radiator nie pomogl prawdopodobnie winne wejscie rpi bylo troche lóźne )
+  > 🔹 Planowane: radiator na RPi,( niestety radiator nie pomogl prawdopodobnie winne wejscie rpi bylo troche luźne )
   > 🔹 Rpi niestety wypadl kupilem asrock desk mini h110 za 30 euro wgralem proxmox w kontenerze lxc (na deb12 wgralem przez skrypt kiauh moonraker i klipper fluidd mam na innym pve ktory zarzadza ender3v3ke i docelowo te vertex k8800
   > ) 🔹 teraz jest problem z poziomowaniem stolu gdyz piezoelektryki slabo dzialaja .........
 
@@ -88,6 +88,7 @@ Pliki pochodzące od innych autorów są objęte ich oryginalnymi licencjami.
   "ui_migration": "fluidd.cfg",
   "autor": "gacorek vel JanuszShark™"
 }
+
 
 
 
